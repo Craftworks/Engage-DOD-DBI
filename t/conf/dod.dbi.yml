@@ -1,0 +1,8 @@
+DOD::DBI:
+  root_class: 'Engage::DOD::DBIx'
+  datasources:
+    W:
+      - 'dbi:SQLite:dbname=__path_to(t/sqlite/DOD-DBI.db)__'
+    R:
+      - 'dbi:SQLite:dbname=__path_to(t/sqlite/DOD-DBI.db)__'
+
