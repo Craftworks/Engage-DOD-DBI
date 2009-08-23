@@ -62,6 +62,12 @@ sub connect {
     return DBI->connect(@$connect_info);
 }
 
+sub resultset {
+    my ( $self, $sth ) = @_;
+
+    return $self->result_class->new( sth => $sth );
+}
+
 package Engage::DOD::DBIx;
 use base 'DBI';
 
