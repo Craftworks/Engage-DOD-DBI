@@ -56,9 +56,10 @@ sub dbh {
 
 sub connect {
     my ( $self, $datasource ) = @_;
+
     my $connect_info = $self->config->{'datasources'}{$datasource};
     $connect_info->[3]{'RootClass'} ||= $self->root_class;
-    DBI->connect(@$connect_info);
+    return DBI->connect(@$connect_info);
 }
 
 package Engage::DOD::DBIx;
@@ -76,14 +77,21 @@ use Time::HiRes;
 sub execute {
     my ( $self, @bind_params ) = @_;
 
+    local $Log::Dispatch::Config::CallerDepth = 1;
+    $self->log->debug(sprintf '%s: %s', $self->{'Statement'}, join(q{, }, @bind_params));
+
+    local $self->{'PrintError'} = 0;
     my $time   = Time::HiRes::time;
     my $rv     = $self->SUPER::execute( @bind_params );
     my $elapse = Time::HiRes::time - $time || 0.000001;
     my $tps    = 1 / $elapse;
 
-    local $Log::Dispatch::Config::CallerDepth = 1;
-    $self->log->debug(sprintf 'Query took %.6fs (%.3f/s)', $elapse, $tps);
-    $self->log->debug(sprintf '%s: %s', $self->{'Statement'}, join(q{, }, @bind_params));
+    if ( $rv ) {
+        $self->log->info(sprintf 'Query took %.6fs (%.3f/s)', $elapse, $tps);
+    }
+    else {
+        $self->log->error('execute failed: ' . $self->errstr);
+    }
 
     return $rv;
 }
