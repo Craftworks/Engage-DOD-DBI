@@ -53,14 +53,18 @@ sub _parse_args {
     my $self = shift;
     my $helper = $self->{helper};
 
-    $self->{dbi_file} = File::Spec->catfile( $helper->{base}, 'lib', $helper->{app}, 'DOD/DBI.pm' );
+    $self->{dod} = File::Spec->catfile( $helper->{base}, 'lib', $helper->{app}, 'DOD' );
+    $self->{dbi} = File::Spec->catfile( $self->{dod}, 'DBI' );
+    $self->{resultset} = File::Spec->catfile( $self->{dbi}, 'ResultSet' );
 }
 
 sub _mk_files {
     my $self = shift;
     my $helper = $self->{helper};
 
-    $helper->render_file( 'dbi', $self->{dbi_file}, $self->{helper} );
+    $helper->render_file( 'dbi', $self->{dbi} . '.pm', $self->{helper} );
+    $helper->mk_dir( $self->{dbi} );
+    $helper->render_file( 'resultset', $self->{resultset} . '.pm', $self->{helper} );
 }
 
 1;
@@ -88,9 +92,46 @@ no Moose;
 
 __PACKAGE__->meta->make_immutable;
 
-=head1 METHODS
+=head1 SEE ALSO
+
+L<Engege>, L<Engage::DOD::DBI>
+
+=head1 AUTHOR
+
+[%author%]
+
+=head1 LICENSE
+
+This library is free software. You can redistribute it and/or modify
+it under the same terms as Perl itself.
 
 =cut
+
+1;
+__resultset__
+package [% app %]::DOD::DBI::ResultSet;
+
+=head1 NAME
+
+[% app %]::DOD::DBI::ResultSet - Engage DOD DBI Result Set
+
+=head1 DESCRIPTION
+
+Engage DOD.
+
+=cut
+
+use Moose;
+
+extends 'Engage::DOD::DBI::ResultSet';
+
+no Moose;
+
+__PACKAGE__->meta->make_immutable;
+
+=head1 SEE ALSO
+
+L<Engege>, L<Engage::DOD::DBI>, L<Engage::DOD::DBI::ResultSet>
 
 =head1 AUTHOR
 
