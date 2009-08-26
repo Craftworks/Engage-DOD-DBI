@@ -2,7 +2,10 @@ package Engage::DOD::DBI;
 
 use Moose;
 use DBI;
+use SQL::Abstract::Limit;
+
 extends 'Engage::DOD';
+with 'Engage::DOD::Role::Driver';
 
 our $VERSION = '0.01';
 
@@ -20,6 +23,21 @@ has 'root_class' => (
         shift->config->{'root_class'} || 'Engage::DOD::DBIx';
     },
     lazy => 1,
+);
+
+has 'sql_maker' => (
+    is  => 'ro',
+    isa => 'SQL::Abstract',
+    default => sub {
+        SQL::Abstract::Limit->new( limit_dialect => shift->dbh('R') );
+    },
+    lazy => 1,
+);
+
+has 'table_info' => (
+    is  => 'rw',
+    isa => 'HashRef',
+    default => sub { {} },
 );
 
 no Moose;
@@ -43,18 +61,18 @@ sub dbh {
         if ( !exists $self->config->{'datasources'}{$datasource} );
 
     if ( !exists $self->connections->{$datasource} ) {
-        $self->connections->{$datasource} = $self->connect( $datasource );
+        $self->connections->{$datasource} = $self->_connect( $datasource );
     }
 
     if ( !$self->connections->{$datasource}->ping ) {
         $self->log->warn(q/The connection had already closed. Trying to reconnect./);
-        $self->connections->{$datasource} = $self->connect( $datasource );
+        $self->connections->{$datasource} = $self->_connect( $datasource );
     }
 
     return $self->connections->{$datasource};
 }
 
-sub connect {
+sub _connect {
     my ( $self, $datasource ) = @_;
 
     my $connect_info = $self->config->{'datasources'}{$datasource};
@@ -62,10 +80,182 @@ sub connect {
     return DBI->connect(@$connect_info);
 }
 
-sub resultset {
-    my ( $self, $sth ) = @_;
+sub _primary_key {
+    my ( $self, $table, $schema, $catalog ) = @_;
 
-    return $self->result_class->new( sth => $sth );
+    if ( !exists $self->table_info->{$table}{'primary_key'} ) {
+        my @primary_key = $self->dbh('R')->primary_key( $catalog, $schema, $table );
+        $self->table_info->{$table}{'primary_key'} = \@primary_key;
+    }
+
+    return $self->table_info->{$table}{'primary_key'};
+}
+
+sub _execute {
+    my ( $self, $datasource, $sql, @bind_params ) = @_;
+    my $sth = $self->dbh($datasource)->prepare($sql);
+    $sth->execute(@bind_params) or confess 'DBI::st aborted';
+    return $self->_resultset( $sth );
+}
+
+sub _resultset {
+    my ( $self, $sth ) = @_;
+    $self->result_class->new( sth => $sth );
+}
+
+sub create {
+    my ( $self, $table, $row ) = @_;
+    my ( $sql, @bind_params ) = $self->sql_maker->insert( $table, $row );
+    return $self->_execute( 'W', $sql, @bind_params );
+}
+
+sub read {
+    my ( $self, $table, $fields, $where, $order, @rest ) = @_;
+
+    my ($sql, @bind_params) = $self->sql_maker->select(
+        $table, $fields, $where, $order, @rest
+    );
+
+    return $self->_execute( 'R', $sql, @bind_params );
+}
+
+sub update {
+    my ( $self, $table, $row ) = @_;
+
+    my $set = { %$row };
+    my $where = $self->_make_where_from_primary_key( $table, $set );
+    my ( $sql, @bind_params ) = $self->sql_maker->update(
+        $table, $set, $where
+    );
+
+    return $self->_execute( 'W', $sql, @bind_params );
+}
+
+sub delete {
+    my ( $self, $table, $where ) = @_;
+
+    my ( $sql, @bind_params ) = $self->sql_maker->delete(
+        $table, $where
+    );
+
+    return $self->_execute( 'W', $sql, @bind_params );
+}
+
+sub create_bulk {
+    my ( $self, $table, $rows ) = @_;
+
+    return unless @$rows;
+
+    my ($sql) = $self->sql_maker->insert( $table, $rows->[0] );
+    my $sth = $self->dbh('W')->prepare($sql);
+
+    my ( $columns_phrase ) = $sql =~ /\((.+?)\) VALUES/o;
+    my @columns = $columns_phrase =~ /\b(\w+?)\b/go;
+
+    my $index = 1;
+    for my $column ( @columns ) {
+        my @data = map $_->{$column}, @$rows;
+        $sth->bind_param_array( $index++, \@data );
+    }
+
+    my $rv = $sth->execute_array({ ArrayTupleStatus => \my @tuple_status });
+    $rv;
+}
+
+sub update_bulk {
+    my ( $self, $table, $rows ) = @_;
+
+    return unless @$rows;
+
+    my $row   = +{ %{ $rows->[0] } };
+    my $where = $self->_make_where_from_primary_key( $table, $row );
+
+    my ( $sql, @bind_params ) = $self->sql_maker->update(
+        $table, $row, $where
+    );
+    my $sth = $self->dbh('W')->prepare($sql);
+
+    my ( $set_phrase, $where_phrase ) = $sql =~ /SET(.+?)WHERE(.+)/o;
+    my @set_columns   = $set_phrase   =~ /\b(\w+?)\b/go;
+    my @where_columns = $where_phrase =~ /\b(\w+?)\b/go;
+
+    my $index = 1;
+    for my $column ( @set_columns, @where_columns ) {
+        my @data = map $_->{$column}, @$rows;
+        $sth->bind_param_array( $index++, \@data );
+    }
+
+    my $rv = $sth->execute_array({ ArrayTupleStatus => \my @tuple_status });
+    $rv;
+}
+
+sub update_or_create {
+    my ( $self, $table, $row ) = @_;
+
+    my $primary_key = $self->_primary_key( $table );
+    my $where = $self->_make_where_from_primary_key( $table, {%$row} );
+
+    my ($sql, @bind_params) = $self->sql_maker->select(
+        $table, $primary_key, $where
+    );
+    my $rs = $self->_execute( 'R', $sql, @bind_params );
+
+    return $rs->next
+        ? $self->update( $table, $row )
+        : $self->create( $table, $row );
+}
+
+sub update_or_create_bulk {
+    my ( $self, $table, $rows ) = @_;
+
+    # primary key check
+    my $primary_key = $self->_primary_key( $table );
+    if ( 1 < @$primary_key ) {
+        $self->log->error(q/bulk_update_or_create() supports only single column primary key/);
+        return;
+    }
+    $primary_key = $primary_key->[0];
+
+    my $values = [ map $_->{$primary_key}, @$rows ];
+
+    # update target
+    my ($sql, @bind_params) = $self->sql_maker->select(
+        $table, $primary_key, { $primary_key => { 'IN' => $values } },
+    );
+    my $rs = $self->_execute( 'R', $sql, @bind_params );
+    my $update_values = $rs->all_array(0);
+
+    # split data
+    my %updates; @updates{@$update_values} = (1) x @$update_values;
+    my @create_data;
+    my @update_data;
+    for my $row ( @$rows ) {
+        $updates{ $row->{$primary_key} }
+            ? push @update_data, $row
+            : push @create_data, $row
+    }
+
+    my $rv_create = $self->create_bulk( $table, \@create_data );
+    my $rv_update = $self->update_bulk( $table, \@update_data );
+
+    return $rv_create + $rv_update;
+}
+
+sub _make_where_from_primary_key {
+    my ( $self, $table, $row, $where ) = @_;
+
+    $where ||= {};
+    my $primary_key = $self->_primary_key( $table );
+    for (@$primary_key) {
+        if ( !exists $row->{$_} ) {
+            local $Data::Dumper::Indent = 0;
+            local $Data::Dumper::Terse  = 1;
+            confess 'primary key not found in data ' . Dumper $row;
+        }
+        $where->{$_} = delete $row->{$_};
+    }
+
+    return $where;
 }
 
 package Engage::DOD::DBIx;
@@ -84,7 +274,7 @@ sub execute {
     my ( $self, @bind_params ) = @_;
 
     local $Log::Dispatch::Config::CallerDepth = 1;
-    $self->log->debug(sprintf '%s: %s', $self->{'Statement'}, join(q{, }, @bind_params));
+    $self->log->info(sprintf '%s: %s', $self->{'Statement'}, join(q{, }, @bind_params));
 
     local $self->{'PrintError'} = 0;
     my $time   = Time::HiRes::time;

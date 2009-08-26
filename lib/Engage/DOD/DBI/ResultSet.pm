@@ -22,12 +22,18 @@ sub next_array {
 
 sub next_hash {
     my $self = shift;
-    wantarray ? %{ $self->sth->fetchrow_hashref } : $self->sth->fetchrow_hashref;
+    my $row = $self->sth->fetchrow_hashref;
+    $row ? ( wantarray ? %$row : $row ) : undef;
 }
 
 sub all_array {
-    my $self = shift;
-    return $self->sth->fetchall_arrayref;
+    my ( $self, $index ) = @_;
+    if ( defined $index ) {
+        return [ map $_->[$index], @{$self->sth->fetchall_arrayref} ];
+    }
+    else {
+        return $self->sth->fetchall_arrayref;
+    }
 }
 
 sub all_hash {

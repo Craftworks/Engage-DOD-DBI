@@ -1,33 +1,8 @@
 package Engage::DAO::Role::DBI;
 
 use Moose::Role;
-use SQL::Abstract::Limit;
-use Data::Dumper;
 
 our $VERSION = '0.01';
-
-with 'Engage::DAO::Role';
-
-has 'sql_maker' => (
-    is  => 'ro',
-    isa => 'SQL::Abstract',
-    default => sub {
-        SQL::Abstract::Limit->new( limit_dialect => shift->dbh('R') );
-    },
-    lazy => 1,
-);
-
-has 'primary_key' => (
-    is  => 'ro',
-    default => sub {
-        my $self = shift;
-        my $catalog;
-        my $schema;
-        my $table = $self->data_name;
-        [ $self->dbh('R')->primary_key( $catalog, $schema, $table ) ];
-    },
-    lazy => 1,
-);
 
 no Moose::Role;
 
@@ -35,53 +10,25 @@ sub dbh {
     shift->dod('DBI')->dbh(shift);
 }
 
-sub resultset {
-    my ( $self, $sth ) = @_;
-    $self->_build_resultset( 'DBI', $sth );
+sub create {
+    my $self = shift;
+    $self->dod('DBI')->create( $self->data_name, @_ );
 }
 
-sub execute {
-    my ( $self, $datasource, $sql, @bind_params ) = @_;
-    my $sth = $self->dbh($datasource)->prepare($sql);
-    $sth->execute(@bind_params) or confess 'DBI::st aborted';
-    return $self->resultset( $sth );
-}
-
-sub create {}
-
-sub search {
-    my ( $self, $fields, $where, $order, @rest ) = @_;
-
-    my ($sql, @bind_params) = $self->sql_maker->select(
-        $self->data_name, $fields, $where, $order, @rest
-    );
-
-    return $self->execute( 'R', $sql, @bind_params );
+sub read {
+    my $self = shift;
+    $self->dod('DBI')->read( $self->data_name, @_ );
 }
 
 sub update {
-    my ( $self, $row ) = @_;
-
-    my %where;
-
-    my $primary_key = $self->primary_key;
-    for (@$primary_key) {
-        if ( !exists $row->{$_} ) {
-            local $Data::Dumper::Indent = 0;
-            local $Data::Dumper::Terse  = 1;
-            confess 'primary key not found in data ' . Dumper $row
-        }
-        $where{$_} = delete $row->{$_};
-    }
-
-    my ($sql, @bind_params) = $self->sql_maker->update(
-        $self->data_name, $row, \%where
-    );
-
-    return $self->execute( 'R', $sql, @bind_params );
+    my $self = shift;
+    $self->dod('DBI')->update( $self->data_name, @_ );
 }
 
-sub delete {}
+sub delete {
+    my $self = shift;
+    $self->dod('DBI')->delete( $self->data_name, @_ );
+}
 
 1;
 
