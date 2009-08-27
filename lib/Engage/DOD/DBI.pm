@@ -3,6 +3,7 @@ package Engage::DOD::DBI;
 use Moose;
 use DBI;
 use SQL::Abstract::Limit;
+use Data::Dumper;
 
 extends 'Engage::DOD';
 with 'Engage::DOD::Role::Driver';
@@ -189,8 +190,59 @@ sub update_bulk {
     $rv;
 }
 
+sub read_or_create {
+    my ( $self, $table, $row ) = @_;
+
+    return $self->read_or_create_bulk( $table, $row ) if ( ref $row eq 'ARRAY' );
+
+    my $primary_key = $self->_primary_key( $table );
+    my $where = $self->_make_where_from_primary_key( $table, {%$row} );
+
+    my ($sql, @bind_params) = $self->sql_maker->select(
+        $table, $primary_key, $where
+    );
+    my $rs = $self->_execute( 'R', $sql, @bind_params );
+
+    return $rs->next
+        ? $rs->rows
+        : $self->create( $table, $row )->rows;
+}
+
+sub read_or_create_bulk {
+    my ( $self, $table, $rows ) = @_;
+
+    # primary key check
+    my $primary_key = $self->_primary_key( $table );
+
+    my $columns = join q{, }, @$primary_key;
+    my $values  = join q{, }, (sprintf '(%s)', join q{, }, ('?') x @$primary_key) x @$rows;
+    my $sql = sprintf 'SELECT %s FROM %s WHERE (%s) IN (%s)', $columns, $table, $columns, $values;
+    my @bind_params = map @$_{@$primary_key}, @$rows;
+
+    # already exists
+    warn $sql;
+    my $rs = $self->_execute( 'R', $sql, @bind_params );
+
+    my %exists;
+    $exists{ join '\t', @$_ } = 1 for @{ $rs->all_array };
+
+    # no rows to create
+    return @$rows if ( $rs->rows == @$rows );
+
+    # split data
+    my @create_data;
+    for my $row ( @$rows ) {
+        my $key = join '\t', @$row{@$primary_key};
+        push @create_data, $row if ( !$exists{ $key } );
+    }
+
+    return $self->create_bulk( $table, \@create_data );
+}
+
 sub update_or_create {
     my ( $self, $table, $row ) = @_;
+
+    return $self->update_or_create_bulk( $table, $row ) if ( ref $row eq 'ARRAY' );
 
     my $primary_key = $self->_primary_key( $table );
     my $where = $self->_make_where_from_primary_key( $table, {%$row} );
@@ -211,7 +263,7 @@ sub update_or_create_bulk {
     # primary key check
     my $primary_key = $self->_primary_key( $table );
     if ( 1 < @$primary_key ) {
-        $self->log->error(q/bulk_update_or_create() supports only single column primary key/);
+        $self->log->error(q/update_or_create_bulk() supports only single column primary key/);
         return;
     }
     $primary_key = $primary_key->[0];

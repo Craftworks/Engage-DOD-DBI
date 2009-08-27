@@ -30,6 +30,16 @@ sub delete {
     $self->dod('DBI')->delete( $self->data_name, @_ );
 }
 
+sub read_or_create {
+    my $self = shift;
+    $self->dod('DBI')->read_or_create( $self->data_name, @_ );
+}
+
+sub update_or_create {
+    my $self = shift;
+    $self->dod('DBI')->update_or_create( $self->data_name, @_ );
+}
+
 1;
 
 =head1 NAME

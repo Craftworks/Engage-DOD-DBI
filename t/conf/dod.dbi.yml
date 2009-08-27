@@ -3,6 +3,8 @@ DOD::DBI:
   datasources:
     W:
       - 'dbi:SQLite:dbname=__path_to(t/sqlite/DOD-DBI.db)__'
+      - 'root'
     R:
       - 'dbi:SQLite:dbname=__path_to(t/sqlite/DOD-DBI.db)__'
+      - 'root'
 
