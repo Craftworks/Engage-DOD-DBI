@@ -31,8 +31,7 @@ sub delete {
 }
 
 sub query {
-    my $self = shift;
-    $self->dod('DBI')->query( $self->data_name, @_ );
+    shift->dod('DBI')->query( @_ );
 }
 
 sub read_or_create {
