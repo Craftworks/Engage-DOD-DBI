@@ -104,6 +104,12 @@ sub _resultset {
     $self->result_class->new( sth => $sth );
 }
 
+sub query {
+    my ( $self, $sql, @bind_params ) = @_;
+    my $datasource = $sql =~ /^\s*(?:SHOW|SELECT)\b/io ? 'R' : 'W';
+    return $self->_execute( $datasource, $sql, @bind_params );
+}
+
 sub create {
     my ( $self, $table, $row ) = @_;
     my ( $sql, @bind_params ) = $self->sql_maker->insert( $table, $row );
@@ -211,6 +217,8 @@ sub read_or_create {
 sub read_or_create_bulk {
     my ( $self, $table, $rows ) = @_;
 
+    return unless @$rows;
+
     # primary key check
     my $primary_key = $self->_primary_key( $table );
 
@@ -220,7 +228,6 @@ sub read_or_create_bulk {
     my @bind_params = map @$_{@$primary_key}, @$rows;
 
     # already exists
-    warn $sql;
     my $rs = $self->_execute( 'R', $sql, @bind_params );
 
     my %exists;
@@ -262,33 +269,30 @@ sub update_or_create_bulk {
 
     # primary key check
     my $primary_key = $self->_primary_key( $table );
-    if ( 1 < @$primary_key ) {
-        $self->log->error(q/update_or_create_bulk() supports only single column primary key/);
-        return;
-    }
-    $primary_key = $primary_key->[0];
 
-    my $values = [ map $_->{$primary_key}, @$rows ];
+    my $columns = join q{, }, @$primary_key;
+    my $values  = join q{, }, (sprintf '(%s)', join q{, }, ('?') x @$primary_key) x @$rows;
+    my $sql = sprintf 'SELECT %s FROM %s WHERE (%s) IN (%s)', $columns, $table, $columns, $values;
+    my @bind_params = map @$_{@$primary_key}, @$rows;
 
-    # update target
-    my ($sql, @bind_params) = $self->sql_maker->select(
-        $table, $primary_key, { $primary_key => { 'IN' => $values } },
-    );
+    # already exists
     my $rs = $self->_execute( 'R', $sql, @bind_params );
-    my $update_values = $rs->all_array(0);
+
+    my %exists;
+    $exists{ join '\t', @$_ } = 1 for @{ $rs->all_array };
 
     # split data
-    my %updates; @updates{@$update_values} = (1) x @$update_values;
     my @create_data;
     my @update_data;
     for my $row ( @$rows ) {
-        $updates{ $row->{$primary_key} }
+        my $key = join '\t', @$row{@$primary_key};
+        $exists{ $key }
             ? push @update_data, $row
             : push @create_data, $row
     }
 
-    my $rv_create = $self->create_bulk( $table, \@create_data );
-    my $rv_update = $self->update_bulk( $table, \@update_data );
+    my $rv_create = $self->create_bulk( $table, \@create_data ) || 0;
+    my $rv_update = $self->update_bulk( $table, \@update_data ) || 0;
 
     return $rv_create + $rv_update;
 }

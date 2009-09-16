@@ -57,6 +57,5 @@ $dbh->do($sql{'create_table'});
     cmp_ok( $dod->read_or_create_bulk( 'test', $data ), '==', 5, 'read_or_create_bulk affects 5 tuples' );
 }
 
-
 $dbh->do($sql{'drop_table'});
 

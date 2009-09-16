@@ -9,6 +9,10 @@ has 'sth' => (
     required => 1,
 );
 
+no Moose;
+
+__PACKAGE__->meta->make_immutable;
+
 sub rows {
     my $self = shift;
     my $rows = $self->sth->rows;
